@@ -1,0 +1,628 @@
+// ============================================================================
+// 1. BIBLIOTECAS E NAMESPACES
+// ============================================================================
+#include <iostream>
+#include <string>
+#include <cstdlib>
+#include <ctime>
+#include <chrono>
+#include <iomanip>
+#include <windows.h>
+#include <conio.h>
+#include <cctype>
+
+using namespace std;
+using namespace std::chrono;
+
+// ============================================================================
+// 2. CONSTANTES, DEFINES E COMANDOS DE SISTEMA
+// ============================================================================
+#define COR_CINZA     "\033[37m" 
+#define COR_AZUL      "\033[94m" // M1: Corrigido para azul
+#define COR_LARANJA   "\033[38;5;208m" 
+#define COR_PRETA     "\033[30m" // Para a bomba
+#define RESET         "\033[0m" 
+
+const char* ESPACO_VAZIO        = "  ";
+const char* BLOCO_INDESTRUTIVEL = COR_CINZA "██" RESET;
+const char* BLOCO_FRAGIL        = COR_AZUL "▒▒" RESET; // M1: Corrigido
+const char* JOGADOR             = "😃";
+const char* BOMBA               = COR_PRETA "💣" RESET; // M1: Corrigido
+const char* BOMBA_EXPLOSAO      = COR_LARANJA "💥" RESET;
+const char* INIMIGO             = "🎈";
+
+const char* ATIVA_CORES_INVERTIDAS    = "\033[7m";
+const char* DESATIVA_CORES_INVERTIDAS = "\033[0m";
+const char* ATIVA_OCULTACAO_CURSOR    = "\033[?25l";
+const char* DESATIVA_OCULTACAO_CURSOR = "\033[?25h";
+const char* MOVE_CURSOR_LINHA1_COLUNA1 = "\033[H";
+const char* LIMPA_TERMINAL_E_MOVE_CURSOR = "\033[2J\033[H";
+const char TECLA_ENTER = 13;
+
+const int QUANTIDADE_MAXIMA_INIMIGOS = 40;
+const int QUANTIDADE_MAXIMA_BOMBAS   = 10;
+const int QUANTIDADE_LINHAS          = 13;
+const int QUANTIDADE_COLUNAS         = 17;
+
+// ============================================================================
+// 3. ESTRUTURAS DE DADOS (MOLDES)
+// ============================================================================
+struct objeto_jogador {
+    int posicao_x = 1;               
+    int posicao_y = 1;               
+    int vidas = 3;                   
+    int pontuacao = 0;               
+    int quantidade_movimentos_usados = 0; 
+    int limite_bombas = 1;           
+    int quantidade_bombas_usadas = 0;
+};
+
+struct objeto_bomba {
+    bool ativa = false;      
+    bool explodindo = false;
+    int posicao_x;           
+    int posicao_y;           
+    int raio_explosao_bomba = 1;    
+    steady_clock::time_point cronometro_duracao; 
+    steady_clock::time_point cronometro_fogo;    
+    int alcance_fogo_x[100]; 
+    int alcance_fogo_y[100];
+    int quantidade_locais_fogo = 0;
+};
+
+struct objeto_inimigo {
+    int posicao_x;                                                                     
+    int posicao_y;                                                                     
+    bool vivo;                                                                         
+    steady_clock::time_point cronometro_ultimo_movimento; 
+};
+
+struct objeto_jogo {
+    bool partida_em_andamento = true; 
+    int fase_atual = 1;       
+    int dificuldade = 1;
+    int quantidade_inimigos_fase = 3;
+    int quantidade_inimigos_vivos = 0; 
+    bool god_mode = false;
+    steady_clock::time_point cronometro_duracao_partida; 
+};
+
+// ============================================================================
+// 4. VARIÁVEIS GLOBAIS (ESTADO DO JOGO)
+// ============================================================================
+string mapa[QUANTIDADE_LINHAS][QUANTIDADE_COLUNAS];
+objeto_jogo jogo;
+objeto_jogador jogador;
+objeto_bomba lista_bombas[QUANTIDADE_MAXIMA_BOMBAS];
+objeto_inimigo lista_inimigos[QUANTIDADE_MAXIMA_INIMIGOS];
+
+// ============================================================================
+// 5. ASSINATURAS DAS FUNÇÕES DE MENU
+// ============================================================================
+void menu_principal();
+void menu_jogar();
+void menu_novo_jogo();
+void menu_info();
+void tela_configuracoes_e_iniciar(int modo_jogo);
+void tela_carregar_jogo();
+void tela_como_jogar();
+void tela_pontuacao();
+void tela_creditos();
+void tela_ranking();
+void iniciar_partida(int modo_jogo); // Onde ficava o seu antigo main()
+
+// ============================================================================
+// 6. MOTOR LÓGICO E GRÁFICO DA PARTIDA
+// ============================================================================
+inline int detectar_tecla_pressionada() { return _kbhit(); }
+inline int associar_tecla() { return toupper(_getch()); }
+
+bool verificar_espaco_livre(int x, int y) {
+    if (mapa[y][x] == ESPACO_VAZIO || mapa[y][x] == BOMBA || mapa[y][x] == BOMBA_EXPLOSAO) return true;
+    return false;
+}
+
+void gerar_mapa() {
+    for (int numero_linha = 0; numero_linha < QUANTIDADE_LINHAS; numero_linha++) {
+        for (int numero_coluna = 0; numero_coluna < QUANTIDADE_COLUNAS; numero_coluna++) {
+            bool borda_horizontal = (numero_linha == 0 || numero_linha == QUANTIDADE_LINHAS - 1);
+            bool borda_vertical   = (numero_coluna == 0 || numero_coluna == QUANTIDADE_COLUNAS - 1);
+            bool pilar_central    = (numero_linha % 2 == 0 && numero_coluna % 2 == 0);
+
+            if (borda_horizontal || borda_vertical || pilar_central) mapa[numero_linha][numero_coluna] = BLOCO_INDESTRUTIVEL;
+            else if (numero_linha <= 2 && numero_coluna <= 2)        mapa[numero_linha][numero_coluna] = ESPACO_VAZIO;
+            else                                                      mapa[numero_linha][numero_coluna] = (rand() % 100 < 45) ? BLOCO_FRAGIL : ESPACO_VAZIO;
+        }
+    }
+    
+    int inimigos_criados = 0;
+    int tentativas_utilizadas = 0; 
+    jogo.quantidade_inimigos_vivos = 0;
+
+    while (inimigos_criados < jogo.quantidade_inimigos_fase && tentativas_utilizadas < 1000) {
+        tentativas_utilizadas++;
+        int linha_aleatoria = 1 + rand() % (QUANTIDADE_LINHAS - 2);
+        int coluna_aleatoria = 1 + rand() % (QUANTIDADE_COLUNAS - 2);
+        bool fora_da_zona_segura = !(linha_aleatoria <= 2 && coluna_aleatoria <= 2);
+
+        if (mapa[linha_aleatoria][coluna_aleatoria] == ESPACO_VAZIO && fora_da_zona_segura) {
+            auto& inimigo = lista_inimigos[inimigos_criados]; 
+            inimigo.posicao_x = coluna_aleatoria;
+            inimigo.posicao_y = linha_aleatoria;
+            inimigo.vivo = true;
+            inimigo.cronometro_ultimo_movimento = steady_clock::now();
+            
+            inimigos_criados++;
+            jogo.quantidade_inimigos_vivos++; 
+        }
+    }
+}
+
+void mover_jogador(char tecla_pressionada) {
+    int x_futuro = jogador.posicao_x; 
+    int y_futuro = jogador.posicao_y;
+
+    if      (tecla_pressionada == 'W' || tecla_pressionada == 'w') y_futuro--;
+    else if (tecla_pressionada == 'S' || tecla_pressionada == 's') y_futuro++;
+    else if (tecla_pressionada == 'A' || tecla_pressionada == 'a') x_futuro--;
+    else if (tecla_pressionada == 'D' || tecla_pressionada == 'd') x_futuro++;
+
+    if (verificar_espaco_livre(x_futuro, y_futuro)) {
+        jogador.posicao_x = x_futuro;
+        jogador.posicao_y = y_futuro;
+        jogador.quantidade_movimentos_usados++;
+    }
+}
+
+void mover_inimigos() {
+    auto tempo_atual = steady_clock::now();
+
+    for (auto& inimigo : lista_inimigos) {
+        if (!inimigo.vivo) continue;
+
+        auto tempo_ultimo_movimento = duration_cast<milliseconds>(tempo_atual - inimigo.cronometro_ultimo_movimento).count();
+        if (tempo_ultimo_movimento < 500) continue;
+
+        inimigo.cronometro_ultimo_movimento = tempo_atual; 
+
+        // Movimento sorteado (1 a 3 casas) - Correção para M1
+        int direcao = rand() % 5;
+        int casas_para_mover = 1 + (rand() % 3);
+
+        for (int step = 0; step < casas_para_mover; step++) {
+            int x_futuro = inimigo.posicao_x;
+            int y_futuro = inimigo.posicao_y;
+
+            if      (direcao == 0) y_futuro--;
+            else if (direcao == 1) y_futuro++;
+            else if (direcao == 2) x_futuro--;
+            else if (direcao == 3) x_futuro++;
+            else break;
+
+            if (verificar_espaco_livre(x_futuro, y_futuro)) {
+                inimigo.posicao_x = x_futuro;
+                inimigo.posicao_y = y_futuro;
+            } else {
+                break; // Bateu na parede, para de andar nessa direção
+            }
+
+            if (inimigo.posicao_x == jogador.posicao_x && inimigo.posicao_y == jogador.posicao_y) {
+                if (!jogo.god_mode) jogador.vidas--;
+            }
+        }
+    }
+}
+
+void posicionar_bomba() {
+    int bombas_ativas_atualmente = 0;
+    for (const auto& b : lista_bombas) {
+        if (b.ativa) bombas_ativas_atualmente++;
+    }
+
+    if (bombas_ativas_atualmente >= jogador.limite_bombas) return;
+
+    for (int i = 0; i < QUANTIDADE_MAXIMA_BOMBAS; i++) {
+        if (!lista_bombas[i].ativa) {
+            lista_bombas[i].posicao_x = jogador.posicao_x;
+            lista_bombas[i].posicao_y = jogador.posicao_y;
+            mapa[jogador.posicao_y][jogador.posicao_x] = BOMBA;
+            
+            lista_bombas[i].ativa = true;
+            lista_bombas[i].explodindo = false;
+            lista_bombas[i].cronometro_duracao = steady_clock::now();
+            jogador.quantidade_bombas_usadas++;
+            break; 
+        }
+    }
+}
+
+void explodir_bomba(int indice_bomba) {
+    auto& bomba = lista_bombas[indice_bomba]; 
+    bomba.quantidade_locais_fogo = 0; 
+
+    int orientacao_y[] = {0, 0, 1, -1};
+    int orientacao_x[] = {1, -1, 0, 0};
+
+    mapa[bomba.posicao_y][bomba.posicao_x] = BOMBA_EXPLOSAO;
+    bomba.alcance_fogo_x[bomba.quantidade_locais_fogo] = bomba.posicao_x;
+    bomba.alcance_fogo_y[bomba.quantidade_locais_fogo] = bomba.posicao_y;
+    bomba.quantidade_locais_fogo++;
+
+    for(int i = 0; i < 4; i++) {
+        for (int raio = 1; raio <= bomba.raio_explosao_bomba; raio++) {
+            int y = bomba.posicao_y + (orientacao_y[i] * raio);
+            int x = bomba.posicao_x + (orientacao_x[i] * raio);
+
+            if (mapa[y][x] == BLOCO_INDESTRUTIVEL) break;
+
+            bool destruiu_bloco = (mapa[y][x] == BLOCO_FRAGIL);
+
+            mapa[y][x] = BOMBA_EXPLOSAO;
+            bomba.alcance_fogo_x[bomba.quantidade_locais_fogo] = x;
+            bomba.alcance_fogo_y[bomba.quantidade_locais_fogo] = y;
+            bomba.quantidade_locais_fogo++;
+
+            if (destruiu_bloco) break;
+        }
+    }
+
+    if (mapa[jogador.posicao_y][jogador.posicao_x] == BOMBA_EXPLOSAO) {
+        if (!jogo.god_mode) jogador.vidas--;
+    }
+
+    for (auto& inimigo : lista_inimigos) {
+        if (inimigo.vivo && mapa[inimigo.posicao_y][inimigo.posicao_x] == BOMBA_EXPLOSAO) {
+            inimigo.vivo = false;
+            jogo.quantidade_inimigos_vivos--; 
+        }
+    }
+
+    bomba.explodindo = true;
+    bomba.cronometro_fogo = steady_clock::now();
+}
+
+void apagar_fogo_bomba(int indice_bomba) {
+    auto& bomba = lista_bombas[indice_bomba];
+    for (int i = 0; i < bomba.quantidade_locais_fogo; i++) {
+        mapa[bomba.alcance_fogo_y[i]][bomba.alcance_fogo_x[i]] = ESPACO_VAZIO;
+    }
+    bomba.explodindo = false; 
+    bomba.ativa = false;      
+}
+
+void partida_hud_superior(int cronometro_duracao_partida) {
+    cout << "╔════════════════════════════════╗\n"
+         << "║ TEMPO:" << setw(4) << cronometro_duracao_partida << "s                    ║\n"
+         << "║ INIMIGOS: " << setw(2) << jogo.quantidade_inimigos_vivos << "                   ║\n"
+         << "║ VIDAS: [" << jogador.vidas << "]                    ║\n"
+         << "╚════════════════════════════════╝\n";
+}
+
+void partida_hud_inferior() {
+    cout << "╔════════════════════════════════╗\n"
+         << "║ MOVIMENTAÇÃO      COLOCAR BOMBA║\n"
+         << "║      [W]               [B]     ║\n"
+         << "║   [A][S][D]                    ║\n"
+         << "║                                ║\n"
+         << "║                SAIR DA PARTIDA ║\n"
+         << "║                      [Q]       ║\n"
+         << "╚════════════════════════════════╝\n";
+}
+
+void imprimir_mapa() {
+    string tela_completa = "";
+    for (int y = 0; y < QUANTIDADE_LINHAS; y++) { 
+        for (int x = 0; x < QUANTIDADE_COLUNAS; x++) {
+            if(y == jogador.posicao_y && x == jogador.posicao_x) {
+                tela_completa += JOGADOR;
+            } 
+            else {
+                bool inimigo_impresso = false;
+                for (const auto& inimigo : lista_inimigos) {
+                    if (inimigo.vivo && inimigo.posicao_y == y && inimigo.posicao_x == x) {
+                        tela_completa += INIMIGO;
+                        inimigo_impresso = true;
+                        break;
+                    }
+                }
+                if (!inimigo_impresso) tela_completa += mapa[y][x];
+            }
+        }
+        tela_completa += "\n";
+    }   
+    cout << tela_completa;
+}
+
+// ============================================================================
+// 7. O GAME LOOP (Substitui o antigo main)
+// ============================================================================
+void iniciar_partida(int modo_jogo) {
+    cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+    
+    // Reseta estado para nova partida
+    jogador.vidas = 3;
+    jogador.posicao_x = 1;
+    jogador.posicao_y = 1;
+    jogador.quantidade_movimentos_usados = 0;
+    jogador.quantidade_bombas_usadas = 0;
+    jogo.partida_em_andamento = true;
+    for(int i=0; i<QUANTIDADE_MAXIMA_BOMBAS; i++) lista_bombas[i].ativa = false;
+    
+    jogo.cronometro_duracao_partida = steady_clock::now();                    
+    gerar_mapa();
+    
+    char tecla_pressionada = ' ';
+
+    while (jogo.partida_em_andamento && jogador.vidas > 0) {
+        
+        if (detectar_tecla_pressionada()) {
+            tecla_pressionada = _getch();
+        }
+        
+        if (tecla_pressionada == 'Q' || tecla_pressionada == 'q') {
+            jogo.partida_em_andamento = false;
+            break;
+        }
+        if (tecla_pressionada == 'B' || tecla_pressionada == 'b') {
+            posicionar_bomba();
+            tecla_pressionada = ' '; 
+        }
+        
+        // M2: Se for modo 3 (espectador), a IA joga. Mas por hora, apenas move.
+        if(modo_jogo != 3) {
+            mover_jogador(tecla_pressionada);
+        }
+        tecla_pressionada = ' '; 
+        
+        mover_inimigos();
+        
+        auto tempo_atual = steady_clock::now();
+        for (int i = 0; i < QUANTIDADE_MAXIMA_BOMBAS; i++) {
+            if (lista_bombas[i].ativa && !lista_bombas[i].explodindo) {
+                auto duracao = duration_cast<seconds>(tempo_atual - lista_bombas[i].cronometro_duracao).count();
+                if (duracao >= 2) explodir_bomba(i); 
+            } 
+            else if (lista_bombas[i].explodindo) {
+                auto duracao_fogo = duration_cast<milliseconds>(tempo_atual - lista_bombas[i].cronometro_fogo).count();
+                if (duracao_fogo >= 300) apagar_fogo_bomba(i); 
+            }
+        }
+
+        if (jogo.quantidade_inimigos_vivos <= 0) {
+            cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+            cout << "\n\n  VITÓRIA! Você eliminou todos os inimigos!\n\n";
+            Sleep(2000);
+            break; 
+        }
+
+        auto cronometro_partida = duration_cast<seconds>(tempo_atual - jogo.cronometro_duracao_partida).count(); 
+        cout << MOVE_CURSOR_LINHA1_COLUNA1;
+        partida_hud_superior(cronometro_partida);
+        imprimir_mapa();
+        partida_hud_inferior();
+        
+        Sleep(50); 
+    }
+    
+    cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+    if(jogador.vidas <= 0) {
+        cout << "\n\n  GAME OVER!\n\n";
+        Sleep(2000);
+    }
+    // Ao terminar a funcão, ele volta naturalmente para o menu onde foi chamado.
+}
+
+// ============================================================================
+// 8. MENUS EM CASCATA
+// ============================================================================
+void menu_principal() {
+    const int qtd_botoes = 4;
+    int botao_selecionado = 0;
+    char tecla_pressionada;
+
+    while (true) {
+        cout << MOVE_CURSOR_LINHA1_COLUNA1;
+        cout << "╔════════════════════════════════════════╗\n"
+             << "║             MENU PRINCIPAL             ║\n"
+             << "╚════════════════════════════════════════╝\n\n";
+             
+        string opcoes[qtd_botoes] = { "  ► JOGAR                                ", "  ► INFO                                 ", "  ► RANKING                              ", "  ► FECHAR PROGRAMA                      " };
+        string opcoes_inativas[qtd_botoes] = { "        JOGAR                            ", "        INFO                             ", "        RANKING                          ", "        FECHAR PROGRAMA                  " };
+
+        for (int i = 0; i < qtd_botoes; i++) {
+            if (botao_selecionado == i) cout << ATIVA_CORES_INVERTIDAS << opcoes[i] << DESATIVA_CORES_INVERTIDAS << "\n\n";
+            else cout << opcoes_inativas[i] << "\n\n";
+        }
+
+        if (_kbhit()) {
+            tecla_pressionada = toupper(_getch());
+            if (tecla_pressionada == 'W') botao_selecionado = (botao_selecionado - 1 + qtd_botoes) % qtd_botoes;
+            if (tecla_pressionada == 'S') botao_selecionado = (botao_selecionado + 1) % qtd_botoes;
+            
+            if (tecla_pressionada == TECLA_ENTER) {
+                cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+                switch (botao_selecionado) {
+                    case 0: menu_jogar(); break;
+                    case 1: menu_info(); break;
+                    case 2: tela_ranking(); break;
+                    case 3: exit(0);
+                }
+                cout << LIMPA_TERMINAL_E_MOVE_CURSOR; 
+            }
+        }
+        Sleep(50);
+    }
+}
+
+void menu_jogar() {
+    const int qtd_botoes = 3;
+    int botao_selecionado = 0;
+    char tecla_pressionada;
+
+    while (true) {
+        cout << MOVE_CURSOR_LINHA1_COLUNA1;
+        cout << "╔════════════════════════════════════════╗\n"
+             << "║               MENU JOGAR               ║\n"
+             << "╚════════════════════════════════════════╝\n\n";
+
+        string opcoes[qtd_botoes] = { "  ► NOVO JOGO  ", "  ► CARREGAR JOGO", "  ► VOLTAR       " };
+        string opcoes_inativas[qtd_botoes] = { "        NOVO JOGO  ", "        CARREGAR JOGO", "        VOLTAR       " };
+
+        for (int i = 0; i < qtd_botoes; i++) {
+            if (botao_selecionado == i) cout << ATIVA_CORES_INVERTIDAS << opcoes[i] << DESATIVA_CORES_INVERTIDAS << "\n\n";
+            else cout << opcoes_inativas[i] << "\n\n";
+        }
+
+        if (_kbhit()) {
+            tecla_pressionada = toupper(_getch());
+            if (tecla_pressionada == 'W') botao_selecionado = (botao_selecionado - 1 + qtd_botoes) % qtd_botoes;
+            if (tecla_pressionada == 'S') botao_selecionado = (botao_selecionado + 1) % qtd_botoes;
+            if (tecla_pressionada == TECLA_ENTER) {
+                cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+                switch (botao_selecionado) {
+                    case 0: menu_novo_jogo(); break;
+                    case 1: tela_carregar_jogo(); break;
+                    case 2: return; 
+                }
+                cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+            }
+        }
+        Sleep(50);
+    }
+}
+
+void menu_novo_jogo() {
+    const int qtd_botoes = 4;
+    int botao_selecionado = 0;
+    char tecla_pressionada;
+
+    while (true) {
+        cout << MOVE_CURSOR_LINHA1_COLUNA1;
+        cout << "╔════════════════════════════════════════╗\n"
+             << "║               NOVO JOGO                ║\n"
+             << "╚════════════════════════════════════════╝\n\n";
+
+        string opcoes[qtd_botoes] = { "  ► 1 JOGADOR        ", "  ► 2 JOGADORES      ", "  ► MODO ESPECTADOR  ", "  ► VOLTAR           " };
+        string opcoes_inativas[qtd_botoes] = { "        1 JOGADOR        ", "        2 JOGADORES      ", "        MODO ESPECTADOR  ", "        VOLTAR           " };
+
+        for (int i = 0; i < qtd_botoes; i++) {
+            if (botao_selecionado == i) cout << ATIVA_CORES_INVERTIDAS << opcoes[i] << DESATIVA_CORES_INVERTIDAS << "\n\n";
+            else cout << opcoes_inativas[i] << "\n\n";
+        }
+
+        if (_kbhit()) {
+            tecla_pressionada = toupper(_getch());
+            if (tecla_pressionada == 'W') botao_selecionado = (botao_selecionado - 1 + qtd_botoes) % qtd_botoes;
+            if (tecla_pressionada == 'S') botao_selecionado = (botao_selecionado + 1) % qtd_botoes;
+            if (tecla_pressionada == TECLA_ENTER) {
+                cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+                switch (botao_selecionado) {
+                    case 0: tela_configuracoes_e_iniciar(1); break;
+                    case 1: tela_configuracoes_e_iniciar(2); break;
+                    case 2: tela_configuracoes_e_iniciar(3); break;
+                    case 3: return; 
+                }
+                cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+            }
+        }
+        Sleep(50);
+    }
+}
+
+void menu_info() {
+    const int qtd_botoes = 4;
+    int botao_selecionado = 0;
+    char tecla_pressionada;
+
+    while (true) {
+        cout << MOVE_CURSOR_LINHA1_COLUNA1;
+        cout << "╔════════════════════════════════════════╗\n"
+             << "║              INFORMAÇÕES               ║\n"
+             << "╚════════════════════════════════════════╝\n\n";
+
+        string opcoes[qtd_botoes] = { "  ► COMO JOGAR ", "  ► PONTUAÇÃO  ", "  ► CRÉDITOS   ", "  ► VOLTAR     " };
+        string opcoes_inativas[qtd_botoes] = { "        COMO JOGAR ", "        PONTUAÇÃO  ", "        CRÉDITOS   ", "        VOLTAR     " };
+
+        for (int i = 0; i < qtd_botoes; i++) {
+            if (botao_selecionado == i) cout << ATIVA_CORES_INVERTIDAS << opcoes[i] << DESATIVA_CORES_INVERTIDAS << "\n\n";
+            else cout << opcoes_inativas[i] << "\n\n";
+        }
+
+        if (_kbhit()) {
+            tecla_pressionada = toupper(_getch());
+            if (tecla_pressionada == 'W') botao_selecionado = (botao_selecionado - 1 + qtd_botoes) % qtd_botoes;
+            if (tecla_pressionada == 'S') botao_selecionado = (botao_selecionado + 1) % qtd_botoes;
+            if (tecla_pressionada == TECLA_ENTER) {
+                cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+                switch (botao_selecionado) {
+                    case 0: tela_como_jogar(); break;
+                    case 1: tela_pontuacao(); break;
+                    case 2: tela_creditos(); break;
+                    case 3: return; 
+                }
+                cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+            }
+        }
+        Sleep(50);
+    }
+}
+
+// ============================================================================
+// 9. TELAS FINAIS (LÓGICAS EXTRAS)
+// ============================================================================
+void tela_configuracoes_e_iniciar(int modo_jogo) {
+    // Essa tela seria o "Setup" da partida antes do jogo iniciar.
+    // Para simplificar a integração inicial, chamamos a partida direto.
+    iniciar_partida(modo_jogo);
+}
+
+void tela_carregar_jogo() {
+    cout << "--- CARREGAR JOGO SALVO ---\n";
+    cout << "Logica de leitura de arquivo aqui...\n";
+    cout << "\nPressione qualquer tecla para voltar...";
+    _getch();
+}
+
+void tela_como_jogar() {
+    cout << "--- COMO JOGAR ---\n";
+    cout << "Regras basicas do jogo...\n";
+    cout << "\nPressione qualquer tecla para voltar...";
+    _getch();
+}
+
+void tela_pontuacao() {
+    cout << "--- SISTEMA DE PONTUACAO ---\n";
+    cout << "Logica de matematica da pontuacao...\n";
+    cout << "\nPressione qualquer tecla para voltar...";
+    _getch();
+}
+
+void tela_creditos() {
+    cout << "--- CREDITOS ---\n";
+    cout << "Desenvolvedores: ...\n";
+    cout << "Universidade do Vale do Itajai\n";
+    cout << "\nPressione qualquer tecla para voltar...";
+    _getch();
+}
+
+void tela_ranking() {
+    cout << "--- RANKING GLOBAL ---\n";
+    cout << "Leitura e ordenacao do ranking...\n";
+    cout << "\nPressione qualquer tecla para voltar...";
+    _getch();
+}
+
+// ============================================================================
+// 10. FUNÇÃO PRINCIPAL (APENAS START DO MENU)
+// ============================================================================
+int main() {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    srand(time(NULL)); 
+    cout << "\033[?25l"; 
+
+    cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
+    menu_principal();
+
+    return 0;
+}
