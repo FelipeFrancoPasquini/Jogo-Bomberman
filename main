@@ -18,14 +18,13 @@ using namespace std::chrono;
 // 2. CONSTANTES, DEFINES E COMANDOS DE SISTEMA
 // ============================================================================
 #define COR_CINZA     "\033[37m" 
-#define COR_AZUL      "\033[94m" // M1: Corrigido para azul
 #define COR_LARANJA   "\033[38;5;208m" 
-#define COR_PRETA     "\033[30m" // Para a bomba
+#define COR_PRETA     "\033[30m"
 #define RESET         "\033[0m" 
 
 const char* ESPACO_VAZIO        = "  ";
 const char* BLOCO_INDESTRUTIVEL = COR_CINZA "██" RESET;
-const char* BLOCO_FRAGIL        = COR_AZUL "▒▒" RESET; // M1: Corrigido
+const char* BLOCO_FRAGIL        = COR_LARANJA "▒▒" RESET; // M1: Corrigido
 const char* JOGADOR             = "😃";
 const char* BOMBA               = COR_PRETA "💣" RESET; // M1: Corrigido
 const char* BOMBA_EXPLOSAO      = COR_LARANJA "💥" RESET;
@@ -412,45 +411,55 @@ void iniciar_partida(int modo_jogo) {
     // Ao terminar a funcão, ele volta naturalmente para o menu onde foi chamado.
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 // ============================================================================
-// 8. MENUS EM CASCATA
+// MENU DO JOGO
 // ============================================================================
-void menu_principal() {
-    const int qtd_botoes = 4;
+void menu_inicial() {
+    static constexpr int quantidade_botoes = 4;
     int botao_selecionado = 0;
     char tecla_pressionada;
+    static const string funcoes_botoes[quantidade_botoes] = {"JOGAR", "INFO", "RANKING", "FECHAR PROGRAMA"};
 
     while (true) {
-        cout << MOVE_CURSOR_LINHA1_COLUNA1;
-        cout << "╔════════════════════════════════════════╗\n"
-             << "║             MENU PRINCIPAL             ║\n"
-             << "╚════════════════════════════════════════╝\n\n";
+        cout << MOVE_CURSOR_LINHA1_COLUNA1
+             << "╔════════════════════════════════════════╗\n"
+                "║               MENU PRINCIPAL           ║\n"
+                "╚════════════════════════════════════════╝\n\n";
              
-        string opcoes[qtd_botoes] = { "  ► JOGAR                                ", "  ► INFO                                 ", "  ► RANKING                              ", "  ► FECHAR PROGRAMA                      " };
-        string opcoes_inativas[qtd_botoes] = { "        JOGAR                            ", "        INFO                             ", "        RANKING                          ", "        FECHAR PROGRAMA                  " };
-
-        for (int i = 0; i < qtd_botoes; i++) {
-            if (botao_selecionado == i) cout << ATIVA_CORES_INVERTIDAS << opcoes[i] << DESATIVA_CORES_INVERTIDAS << "\n\n";
-            else cout << opcoes_inativas[i] << "\n\n";
+        for (int i = 0; i < quantidade_botoes; i++) {
+            if (botao_selecionado == i) cout << ATIVA_CORES_INVERTIDAS << "  ► " << funcoes_botoes[i] << "    " << DESATIVA_CORES_INVERTIDAS << "\n\n";
+            else cout << "    " << funcoes_botoes[i] << "\n\n";
         }
 
-        if (_kbhit()) {
-            tecla_pressionada = toupper(_getch());
-            if (tecla_pressionada == 'W') botao_selecionado = (botao_selecionado - 1 + qtd_botoes) % qtd_botoes;
-            if (tecla_pressionada == 'S') botao_selecionado = (botao_selecionado + 1) % qtd_botoes;
+        if (detectar_tecla_pressionada()) {
+            tecla_pressionada = associar_tecla();
             
-            if (tecla_pressionada == TECLA_ENTER) {
+            if (tecla_pressionada == 'W') botao_selecionado = (botao_selecionado - 1 + quantidade_botoes) % quantidade_botoes;
+            else if (tecla_pressionada == 'S') botao_selecionado = (botao_selecionado + 1) % quantidade_botoes;
+            else if (tecla_pressionada == TECLA_ENTER) {
                 cout << LIMPA_TERMINAL_E_MOVE_CURSOR;
                 switch (botao_selecionado) {
                     case 0: menu_jogar(); break;
                     case 1: menu_info(); break;
-                    case 2: tela_ranking(); break;
+                    case 2: menu_ranking(); break;
                     case 3: exit(0);
                 }
                 cout << LIMPA_TERMINAL_E_MOVE_CURSOR; 
             }
         }
-        Sleep(50);
     }
 }
 
@@ -461,9 +470,9 @@ void menu_jogar() {
 
     while (true) {
         cout << MOVE_CURSOR_LINHA1_COLUNA1;
-        cout << "╔════════════════════════════════════════╗\n"
-             << "║               MENU JOGAR               ║\n"
-             << "╚════════════════════════════════════════╝\n\n";
+        cout << "╔════════════════════════════════╗\n"
+             << "║          MENU JOGAR               ║\n"
+             << "╚════════════════════════════════╝\n\n";
 
         string opcoes[qtd_botoes] = { "  ► NOVO JOGO  ", "  ► CARREGAR JOGO", "  ► VOLTAR       " };
         string opcoes_inativas[qtd_botoes] = { "        NOVO JOGO  ", "        CARREGAR JOGO", "        VOLTAR       " };
@@ -473,8 +482,8 @@ void menu_jogar() {
             else cout << opcoes_inativas[i] << "\n\n";
         }
 
-        if (_kbhit()) {
-            tecla_pressionada = toupper(_getch());
+        if (detectar_tecla_pressionada()) {
+            tecla_pressionada = associar_tecla();
             if (tecla_pressionada == 'W') botao_selecionado = (botao_selecionado - 1 + qtd_botoes) % qtd_botoes;
             if (tecla_pressionada == 'S') botao_selecionado = (botao_selecionado + 1) % qtd_botoes;
             if (tecla_pressionada == TECLA_ENTER) {
